@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>画角再現システム - フェーズ1</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #111;
+            font-family: sans-serif;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px 0;
+            box-sizing: border-box;
+        }
+        .container {
+            position: relative;
+            width: 90%;
+            max-width: 640px;
+        }
+        video {
+            display: none;
+        }
+        canvas {
+            width: 100%;
+            height: auto;
+            border: 2px solid #555;
+            border-radius: 8px;
+            display: block;
+            transition: border-color 0.3s;
+        }
+        canvas.locked {
+            border-color: #34c759;
+            box-shadow: 0 0 15px rgba(52, 199, 89, 0.5);
+        }
+        /* 管理パネル・コントロール周りのスタイル */
+        .panel {
+            background-color: #222;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            width: 90%;
+            max-width: 610px;
+            box-sizing: border-box;
+            border: 1px solid #444;
+        }
+        .panel-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #aaa;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #444;
+            padding-bottom: 5px;
+        }
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn {
+            padding: 12px 24px;
+            font-size: 16px;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        #start-btn { background-color: #007aff; width: 90%; max-width: 640px; margin: 15px 0; font-size: 18px; padding: 15px; }
+        #start-btn:disabled { background-color: #555; cursor: not-allowed; }
+        
+        #shoot-btn { background-color: #34c759; display: none; animation: pulse 1.5s infinite; width: 90%; max-width: 640px; margin: 15px 0; font-size: 18px; padding: 15px; }
+        
+        /* 管理用ボタンの色分け */
+        .btn-save { background-color: #ff9500; }     /* オレンジ */
+        .btn-export { background-color: #5856d6; }   /* パープル */
+        .btn-import { background-color: #555; }      /* グレー */
+        
+        .btn:active { transform: scale(0.98); }
+        
+        #status {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-align: center;
+            min-height: 24px;
+            padding: 0 10px;
+        }
+        #camera-trigger, #import-file {
+            display: none;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(52, 199, 89, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+        }
+    </style>
+    <script async src="https://docs.opencv.org/4.x/opencv.js" id="opencv-src"></script>
+</head>
+<body>
+
+    <div id="status">OpenCV.jsを読み込んでいます...</div>
+    
+    <div class="container">
+        <video id="camera-view" autoplay playsinline muted></video>
+        <canvas id="canvas-output"></canvas>
+    </div>
+
+    <button id="start-btn" class="btn" disabled>システム開始</button>
+    <button id="shoot-btn" class="btn">📸 画角OK！撮影開始（0.5倍へ）</button>
+
+    <!-- 各種データ処理用の隠しインプット -->
+    <input type="file" id="camera-trigger" accept="image/*" capture="environment">
+    <input type="file" id="import-file" accept=".json">
+
+    <!-- 画角管理パネル（追加項目） -->
+    <div class="panel">
+        <div class="panel-title">⚙️ 初日用・画角データの管理</div>
+        <div class="btn-group">
+            <button id="save-btn" class="btn btn-save">この画角を「基準」に設定</button>
+            <button id="export-btn" class="btn btn-export">データをファイル保存 (DL)</button>
+            <button id="import-btn" class="btn btn-import">データを復元 (再読込)</button>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('camera-view');
+        const canvas = document.getElementById('canvas-output');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        const shootBtn = document.getElementById('shoot-btn');
+        const statusText = document.getElementById('status');
+        const cameraTrigger = document.getElementById('camera-trigger');
+        
+        // 追加した要素の取得
+        const saveBtn = document.getElementById('save-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const importBtn = document.getElementById('import-btn');
+        const importFile = document.getElementById('import-file');
+
+        let src, dst, hsv, mask, contours, hierarchy;
+        let isProcessing = false;
+        
+        let lockCounter = 0;
+        const REQUIRED_FRAMES = 15; 
+
+        // 内部で保持する画角データ
+        let currentDetectedPoints = null; // 現在検知中の4点座標
+        let savedAngleData = null;       // ローカルに保存されている基準データ
+
+        // アプリ起動時にローカルストレージから既存のデータを読み込む
+        window.addEventListener('DOMContentLoaded', () => {
+            const localData = localStorage.getItem('robot_cooking_angle_data');
+            if (localData) {
+                savedAngleData = JSON.parse(localData);
+                console.log("既存の画角データをロードしました:", savedAngleData);
+            }
+        });
+
+        // OpenCV.js の読み込み完了を待つ
+        document.getElementById('opencv-src').addEventListener('load', () => {
+            if (savedAngleData) {
+                statusText.innerText = "準備完了！(記憶された画角データがあります)";
+            } else {
+                statusText.innerText = "準備完了！初日はまず画角を調整し『基準』に設定してください";
+            }
+            startBtn.disabled = false;
+        });
+
+        startBtn.addEventListener('click', async () => {
+            statusText.innerText = "広角スキャン用カメラを探索中...";
+            try {
+                const initStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                initStream.getTracks().forEach(track => track.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                let targetDeviceId = null;
+
+                const wideDevice = videoDevices.find(d => {
+                    const label = d.label.toLowerCase();
+                    return label.includes('ultra') || label.includes('wide') || label.includes('0.5') || label.includes('超広角');
+                });
+
+                if (wideDevice) { targetDeviceId = wideDevice.deviceId; } 
+                else if (videoDevices.length > 1) { targetDeviceId = videoDevices[videoDevices.length - 1].deviceId; }
+
+                const constraints = { audio: false, video: { width: { ideal: 640 }, height: { ideal: 480 } } };
+                if (targetDeviceId) { constraints.video.deviceId = { exact: targetDeviceId }; } 
+                else { constraints.video.facingMode = 'environment'; }
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                const videoTrack = stream.getVideoTracks()[0];
+                const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+                
+                if (capabilities.zoom) {
+                    try {
+                        await videoTrack.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min }] });
+                    } catch (e) { console.warn(e); }
+                }
+
+                video.srcObject = stream;
+                video.play();
+                startBtn.style.display = 'none';
+                
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    
+                    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                    dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                    hsv = new cv.Mat();
+                    mask = new cv.Mat();
+                    contours = new cv.MatVector();
+                    hierarchy = new cv.Mat();
+
+                    isProcessing = true;
+                    statusText.innerText = "内側マーカー4つを画面内に収めてください";
+                    requestAnimationFrame(processVideo);
+                };
+            } catch (error) {
+                statusText.innerText = "カメラ起動失敗: " + error.message;
+            }
+        });
+
+        // 📸【初日用】現在の画角・座標を保存する処理
+        saveBtn.addEventListener('click', () => {
+            if (!currentDetectedPoints || currentDetectedPoints.length !== 4) {
+                alert("エラー：現在マーカーが正しく4点検出されていません。画面に収めてから押してください。");
+                return;
+            }
+
+            // 現在のキャンバスの見た目（静止画）をBase64文字列として取得
+            const imageDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+
+            // 保存用のオブジェクトを作成
+            savedAngleData = {
+                timestamp: new Date().toISOString(),
+                points: currentDetectedPoints,
+                image: imageDataUrl
+            };
+
+            // ローカルストレージに保存
+            localStorage.setItem('robot_cooking_angle_data', JSON.stringify(savedAngleData));
+            alert("🎉 本日の画角を『基準データ』として端末に記憶しました！\n2日目以降はこの位置に合わせて撮影します。");
+        });
+
+        // 📥【バックアップ】データをファイル(JSON)としてダウンロード
+        exportBtn.addEventListener('click', () => {
+            if (!savedAngleData) {
+                alert("保存された基準データがありません。先に「基準に設定」を行ってください。");
+                return;
+            }
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(savedAngleData));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `angle_base_data.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        });
+
+        // 📤【復元】ファイルを選択させるトリガー
+        importBtn.addEventListener('click', () => {
+            importFile.click();
+        });
+
+        // 📤【復元】JSONファイルが読み込まれたときの処理
+        importFile.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const parsedData = JSON.parse(event.target.result);
+                    if (parsedData.points && parsedData.image) {
+                        savedAngleData = parsedData;
+                        localStorage.setItem('robot_cooking_angle_data', JSON.stringify(savedAngleData));
+                        alert("🎉 ファイルから画角データを正常に復元しました！");
+                    } else {
+                        alert("不正なファイル形式です。正しい画角バックアップファイルを選択してください。");
+                    }
+                } catch (err) {
+                    alert("ファイルの読み込みに失敗しました。");
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        shootBtn.addEventListener('click', () => {
+            isProcessing = false;
+            cameraTrigger.click();
+        });
+
+        cameraTrigger.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                statusText.innerHTML = `<span style="color: #34c759;">🎉 写真の取り込みに成功しました！</span>`;
+            }
+            lockCounter = 0;
+            shootBtn.style.display = 'none';
+            canvas.classList.remove('locked');
+            isProcessing = true;
+            requestAnimationFrame(processVideo);
+        });
+
+        function processVideo() {
+            if (!isProcessing) return;
+
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            src.data.set(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+
+            cv.GaussianBlur(src, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+            cv.cvtColor(dst, hsv, cv.COLOR_RGBA2RGB);
+            cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+
+            let low = cv.matFromArray(3, 1, cv.CV_8U, [35, 80, 60]);
+            let high = cv.matFromArray(3, 1, cv.CV_8U, [85, 255, 255]);
+            cv.inRange(hsv, low, high, mask);
+            low.delete(); high.delete();
+
+            cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            let validCenters = [];
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+                let perimeter = cv.arcLength(cnt, true);
+
+                if (area > 50 && perimeter > 0) {
+                    let circularity = (4 * Math.PI * area) / (perimeter * perimeter);
+                    if (circularity > 0.55) { 
+                        let M = cv.moments(cnt);
+                        if (M.m00 !== 0) {
+                            validCenters.push({ x: M.m10 / M.m00, y: M.m01 / M.m00 });
+                        }
+                    }
+                }
+                cnt.delete();
+            }
+
+            if (validCenters.length === 4) {
+                lockCounter++;
+
+                validCenters.sort((a, b) => a.y - b.y);
+                let topTwo = [validCenters[0], validCenters[1]].sort((a, b) => a.x - b.x);
+                let bottomTwo = [validCenters[2], validCenters[3]].sort((a, b) => a.x - b.x);
+                
+                // 【重要】検出された4点の座標をグローバル変数に格納（保存ボタン用）
+                currentDetectedPoints = [topTwo[0], topTwo[1], bottomTwo[1], bottomTwo[0]];
+
+                ctx.strokeStyle = '#34c759';
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(currentDetectedPoints[0].x, currentDetectedPoints[0].y);
+                ctx.lineTo(currentDetectedPoints[1].x, currentDetectedPoints[1].y);
+                ctx.lineTo(currentDetectedPoints[2].x, currentDetectedPoints[2].y);
+                ctx.lineTo(currentDetectedPoints[3].x, currentDetectedPoints[3].y);
+                ctx.closePath();
+                ctx.stroke();
+
+                if (lockCounter >= REQUIRED_FRAMES) {
+                    canvas.classList.add('locked');
+                    shootBtn.style.display = 'block';
+                    statusText.innerHTML = `<span style="color: #34c759;">🟢 領域を確認しました。撮影へ進めます。</span>`;
+                } else {
+                    statusText.innerHTML = `🟡 領域を確認中...`;
+                }
+            } else {
+                lockCounter = 0;
+                currentDetectedPoints = null; // 4点ないときはリセット
+                shootBtn.style.display = 'none';
+                canvas.classList.remove('locked');
+                statusText.innerHTML = `🔍 マーカーを探しています... (${validCenters.length} / 4)`;
+            }
+
+            requestAnimationFrame(processVideo);
+        }
+    </script>
+</body>
+</html>
