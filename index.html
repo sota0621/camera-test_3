@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>画角再現システム - フェーズ2</title>
+    <title>画角再現システム - かんたん自動版</title>
     <style>
         body {
             margin: 0;
@@ -23,9 +23,7 @@
             width: 90%;
             max-width: 640px;
         }
-        video {
-            display: none;
-        }
+        video { display: none; }
         canvas {
             width: 100%;
             height: auto;
@@ -38,93 +36,69 @@
             border-color: #34c759;
             box-shadow: 0 0 15px rgba(52, 199, 89, 0.5);
         }
-        
-        /* 【追加】オーバーレイ（ゴースト）用キャンバスのスタイル */
+        canvas.error {
+            border-color: #ff3b30;
+            box-shadow: 0 0 15px rgba(255, 59, 48, 0.5);
+        }
         #canvas-overlay {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            pointer-events: none; /* 下のキャンバスの操作やクリックを邪魔しない */
-            opacity: 0.4;        /* デフォルトの不透明度（40%） */
-            border: 2px solid transparent; /* 枠線のズレ防止 */
-            box-sizing: border-box;
-        }
-
-        .panel {
-            background-color: #222;
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 15px;
-            width: 90%;
-            max-width: 610px;
-            box-sizing: border-box;
-            border: 1px solid #444;
-        }
-        .panel-title {
-            font-size: 14px;
-            font-weight: bold;
-            color: #aaa;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #444;
-            padding-bottom: 5px;
-        }
-        
-        /* 【追加】スライダー周りのスタイル */
-        .slider-group {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background-color: #333;
-            padding: 8px 12px;
-            border-radius: 6px;
-            margin-bottom: 12px;
-            font-size: 14px;
-        }
-        .slider-group input {
-            flex-grow: 1;
-            margin-left: 15px;
-            accent-color: #007aff;
-        }
-
-        .btn-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            justify-content: center;
+            pointer-events: none;
+            opacity: 0.4; /* お手本の薄さ */
         }
         .btn {
-            padding: 12px 24px;
-            font-size: 16px;
+            padding: 15px 30px;
+            font-size: 18px;
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: bold;
             transition: all 0.2s;
+            width: 90%;
+            max-width: 640px;
+            margin: 15px 0;
         }
-        #start-btn { background-color: #007aff; width: 90%; max-width: 640px; margin: 15px 0; font-size: 18px; padding: 15px; }
+        #start-btn { background-color: #007aff; }
         #start-btn:disabled { background-color: #555; cursor: not-allowed; }
-        
-        #shoot-btn { background-color: #34c759; display: none; animation: pulse 1.5s infinite; width: 90%; max-width: 640px; margin: 15px 0; font-size: 18px; padding: 15px; }
-        
-        .btn-save { background-color: #ff9500; }
-        .btn-export { background-color: #5856d6; }
-        .btn-import { background-color: #555; }
-        .btn:active { transform: scale(0.98); }
+        #shoot-btn { background-color: #34c759; display: none; animation: pulse 1.5s infinite; }
+        #shoot-btn:active { transform: scale(0.98); }
         
         #status {
             font-size: 16px;
             font-weight: bold;
             margin-bottom: 10px;
             text-align: center;
-            min-height: 24px;
+            min-height: 48px;
             padding: 0 10px;
+            line-height: 1.4;
         }
-        #camera-trigger, #import-file {
-            display: none;
+        
+        /* リセットボタン用の控えめなスタイル */
+        .reset-container {
+            margin-top: 30px;
+            width: 100%;
+            text-align: center;
         }
+        .btn-reset {
+            background: none;
+            border: 1px solid #555;
+            color: #888;
+            padding: 8px 16px;
+            font-size: 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            width: auto;
+        }
+        .btn-reset:hover {
+            color: #ff3b30;
+            border-color: #ff3b30;
+        }
+
+        #camera-trigger { display: none; }
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.7); }
             70% { box-shadow: 0 0 0 10px rgba(52, 199, 89, 0); }
@@ -140,7 +114,6 @@
     <div class="container">
         <video id="camera-view" autoplay playsinline muted></video>
         <canvas id="canvas-output"></canvas>
-        <!-- 【追加】リアルタイム映像の上に重ねる半透明のキャンバス -->
         <canvas id="canvas-overlay"></canvas>
     </div>
 
@@ -148,92 +121,57 @@
     <button id="shoot-btn" class="btn">📸 画角OK！撮影開始（0.5倍へ）</button>
 
     <input type="file" id="camera-trigger" accept="image/*" capture="environment">
-    <input type="file" id="import-file" accept=".json">
 
-    <div class="panel">
-        <div class="panel-title">⚙️ 画角データの管理と調整</div>
-        
-        <!-- 【追加】お手本画像の透明度調整スライダー -->
-        <div class="slider-group">
-            <span>お手本重ね合わせ (透明度)</span>
-            <input type="range" id="opacity-slider" min="0" max="100" value="40">
-        </div>
-
-        <div class="btn-group">
-            <button id="save-btn" class="btn btn-save">この画角を「基準」に設定</button>
-            <button id="export-btn" class="btn btn-export">データをファイル保存 (DL)</button>
-            <button id="import-btn" class="btn btn-import">データを復元 (再読込)</button>
-        </div>
+    <!-- 隠されたリセットエリア -->
+    <div class="reset-container">
+        <button id="reset-btn" class="btn-reset">🔄 画角データをリセットする</button>
     </div>
 
     <script>
         const video = document.getElementById('camera-view');
         const canvas = document.getElementById('canvas-output');
         const ctx = canvas.getContext('2d');
-        
-        // 【追加】オーバーレイ用要素とスライダーの取得
         const canvasOverlay = document.getElementById('canvas-overlay');
         const ctxOverlay = canvasOverlay.getContext('2d');
-        const opacitySlider = document.getElementById('opacity-slider');
 
         const startBtn = document.getElementById('start-btn');
         const shootBtn = document.getElementById('shoot-btn');
         const statusText = document.getElementById('status');
         const cameraTrigger = document.getElementById('camera-trigger');
-        
-        const saveBtn = document.getElementById('save-btn');
-        const exportBtn = document.getElementById('export-btn');
-        const importBtn = document.getElementById('import-btn');
-        const importFile = document.getElementById('import-file');
+        const resetBtn = document.getElementById('reset-btn');
 
         let src, dst, hsv, mask, contours, hierarchy;
         let isProcessing = false;
         
         let lockCounter = 0;
-        const REQUIRED_FRAMES = 15; 
+        const REQUIRED_FRAMES = 80; // 0.5秒の安定性
+        const ALLOWED_ERROR = 20;    // 許容するズレ（ピクセル単位）
 
         let currentDetectedPoints = null; 
         let savedAngleData = null;       
+        let isFirstDayMode = true;       // 初日モードかどうかのフラグ
 
-        // 【追加】保存されている基準画像（Base64）を重ね合わせキャンバスに描画する関数
-        function drawOverlayImage() {
-            if (!savedAngleData || !savedAngleData.image) {
-                ctxOverlay.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
-                return;
-            }
-            const img = new Image();
-            img.onload = () => {
-                ctxOverlay.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
-                // 解像度を合わせて描画
-                ctxOverlay.drawImage(img, 0, 0, canvasOverlay.width, canvasOverlay.height);
-            };
-            img.src = savedAngleData.image;
-        }
-
-        // 【追加】スライダーを動かしたときに透明度をリアルタイム変更するイベント
-        opacitySlider.addEventListener('input', (e) => {
-            canvasOverlay.style.opacity = e.target.value / 100;
-        });
-
+        // 起動時にデータを自動確認
         window.addEventListener('DOMContentLoaded', () => {
             const localData = localStorage.getItem('robot_cooking_angle_data');
             if (localData) {
                 savedAngleData = JSON.parse(localData);
-                console.log("既存の画角データをロードしました:", savedAngleData);
+                isFirstDayMode = false;
+                console.log("既存の基準データを読み込みました");
             }
         });
 
         document.getElementById('opencv-src').addEventListener('load', () => {
-            if (savedAngleData) {
-                statusText.innerText = "準備完了！(記憶された画角データがあります)";
+            if (isFirstDayMode) {
+                statusText.innerHTML = "準備完了！ボタンを押して開始してください<br><span style='color:#ff9500; font-size:13px;'>※初日：ベストな画角に合わせると自動で記憶されます</span>";
             } else {
-                statusText.innerText = "準備完了！初日はまず画角を調整し『基準』に設定してください";
+                statusText.innerHTML = "準備完了！ボタンを押して開始してください<br><span style='color:#007aff; font-size:13px;'>※2日目以降：前日の影に合わせてください</span>";
             }
             startBtn.disabled = false;
         });
 
         startBtn.addEventListener('click', async () => {
-            statusText.innerText = "広角スキャン用カメラを探索中...";
+            statusText.innerText = "カメラを起動中...";
             try {
                 const initStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
                 initStream.getTracks().forEach(track => track.stop());
@@ -259,9 +197,7 @@
                 const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
                 
                 if (capabilities.zoom) {
-                    try {
-                        await videoTrack.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min }] });
-                    } catch (e) { console.warn(e); }
+                    try { await videoTrack.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min }] }); } catch (e) {}
                 }
 
                 video.srcObject = stream;
@@ -271,105 +207,71 @@
                 video.onloadedmetadata = () => {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
-                    
-                    // 【追加】重ね合わせ用キャンバスの解像度も映像と完全に一致させる
                     canvasOverlay.width = video.videoWidth;
                     canvasOverlay.height = video.videoHeight;
                     
-                    // カメラ起動直後にお手本画像を描画
-                    drawOverlayImage();
+                    // 2日目以降ならお手本を重ねて描画
+                    if (!isFirstDayMode && savedAngleData && savedAngleData.image) {
+                        const img = new Image();
+                        img.onload = () => { ctxOverlay.drawImage(img, 0, 0, canvasOverlay.width, canvasOverlay.height); };
+                        img.src = savedAngleData.image;
+                    }
 
                     src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
                     dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-                    hsv = new cv.Mat();
-                    mask = new cv.Mat();
-                    contours = new cv.MatVector();
-                    hierarchy = new cv.Mat();
+                    hsv = new cv.Mat(); mask = new cv.Mat(); contours = new cv.MatVector(); hierarchy = new cv.Mat();
 
                     isProcessing = true;
-                    statusText.innerText = "お手本の影に重なるように三脚を調整してください";
                     requestAnimationFrame(processVideo);
                 };
-            } catch (error) {
-                statusText.innerText = "カメラ起動失敗: " + error.message;
+            } catch (error) { statusText.innerText = "カメラ起動失敗: " + error.message; }
+        });
+
+        // 🔄 データリセットボタンが押されたとき
+        resetBtn.addEventListener('click', () => {
+            if (confirm("保存されている画角データを削除しますか？\n（新しい画角で初日からやり直したい場合のみ行ってください）")) {
+                localStorage.removeItem('robot_cooking_angle_data');
+                alert("データをリセットしました。ページを再読み込みします。");
+                location.reload();
             }
         });
 
-        saveBtn.addEventListener('click', () => {
-            if (!currentDetectedPoints || currentDetectedPoints.length !== 4) {
-                alert("エラー：現在マーカーが正しく 4点 検出されていません。");
-                return;
-            }
-
-            const imageDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-
-            savedAngleData = {
-                timestamp: new Date().toISOString(),
-                points: currentDetectedPoints,
-                image: imageDataUrl
-            };
-
-            localStorage.setItem('robot_cooking_angle_data', JSON.stringify(savedAngleData));
-            
-            // 【追加】新規保存したお手本画像をオーバーレイに即時反映
-            drawOverlayImage();
-            
-            alert("🎉 本日の画角を『基準データ』として記憶しました！");
-        });
-
-        exportBtn.addEventListener('click', () => {
-            if (!savedAngleData) {
-                alert("保存された基準データがありません。");
-                return;
-            }
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(savedAngleData));
+        // 自動バックアップDL関数
+        function autoExportJSON(data) {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
             const downloadAnchor = document.createElement('a');
             downloadAnchor.setAttribute("href", dataStr);
-            downloadAnchor.setAttribute("download", `angle_base_data.json`);
+            downloadAnchor.setAttribute("download", `angle_backup_data.json`);
             document.body.appendChild(downloadAnchor);
             downloadAnchor.click();
             downloadAnchor.remove();
-        });
-
-        importBtn.addEventListener('click', () => { importFile.click(); });
-
-        importFile.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                try {
-                    const parsedData = JSON.parse(event.target.result);
-                    if (parsedData.points && parsedData.image) {
-                        savedAngleData = parsedData;
-                        localStorage.setItem('robot_cooking_angle_data', JSON.stringify(savedAngleData));
-                        
-                        // 【追加】復元したお手本画像をオーバーレイに即時反映
-                        drawOverlayImage();
-                        
-                        alert("🎉 ファイルから画角データを正常に復元しました！");
-                    } else {
-                        alert("不正なファイル形式です。");
-                    }
-                } catch (err) { alert("ファイルの読み込みに失敗しました。"); }
-            };
-            reader.readAsText(file);
-        });
+        }
 
         shootBtn.addEventListener('click', () => {
+            // 【初日の場合のみ】撮影開始ボタンが押された瞬間に、裏で自動的に基準として保存＆JSONを自動DLさせる
+            if (isFirstDayMode && currentDetectedPoints) {
+                const imageDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                savedAngleData = {
+                    timestamp: new Date().toISOString(),
+                    points: currentDetectedPoints,
+                    image: imageDataUrl
+                };
+                localStorage.setItem('robot_cooking_angle_data', JSON.stringify(savedAngleData));
+                autoExportJSON(savedAngleData); // 裏で自動ダウンロード
+                isFirstDayMode = false;
+            }
+
             isProcessing = false;
             cameraTrigger.click();
         });
 
         cameraTrigger.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                statusText.innerHTML = `<span style="color: #34c759;">🎉 写真の取り込みに成功しました！</span>`;
-            }
             lockCounter = 0;
             shootBtn.style.display = 'none';
             canvas.classList.remove('locked');
+            canvas.classList.remove('error');
             isProcessing = true;
+            statusText.innerHTML = "撮影完了しました。次の準備をしてください。";
             requestAnimationFrame(processVideo);
         });
 
@@ -385,61 +287,79 @@
 
             let low = cv.matFromArray(3, 1, cv.CV_8U, [35, 80, 60]);
             let high = cv.matFromArray(3, 1, cv.CV_8U, [85, 255, 255]);
-            cv.inRange(hsv, low, high, mask);
-            low.delete(); high.delete();
+            cv.inRange(hsv, low, high, mask); low.delete(); high.delete();
 
             cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
             let validCenters = [];
-
             for (let i = 0; i < contours.size(); ++i) {
                 let cnt = contours.get(i);
                 let area = cv.contourArea(cnt);
                 let perimeter = cv.arcLength(cnt, true);
-
                 if (area > 50 && perimeter > 0) {
                     let circularity = (4 * Math.PI * area) / (perimeter * perimeter);
                     if (circularity > 0.55) { 
                         let M = cv.moments(cnt);
-                        if (M.m00 !== 0) {
-                            validCenters.push({ x: M.m10 / M.m00, y: M.m01 / M.m00 });
-                        }
+                        if (M.m00 !== 0) { validCenters.push({ x: M.m10 / M.m00, y: M.m01 / M.m00 }); }
                     }
                 }
                 cnt.delete();
             }
 
             if (validCenters.length === 4) {
-                lockCounter++;
-
                 validCenters.sort((a, b) => a.y - b.y);
                 let topTwo = [validCenters[0], validCenters[1]].sort((a, b) => a.x - b.x);
                 let bottomTwo = [validCenters[2], validCenters[3]].sort((a, b) => a.x - b.x);
-                
                 currentDetectedPoints = [topTwo[0], topTwo[1], bottomTwo[1], bottomTwo[0]];
 
-                ctx.strokeStyle = '#34c759';
-                ctx.lineWidth = 5;
-                ctx.beginPath();
+                // 2日目以降の自動画角チェック
+                let isAnglePerfect = true;
+                if (!isFirstDayMode && savedAngleData) {
+                    for (let i = 0; i < 4; i++) {
+                        let dx = currentDetectedPoints[i].x - savedAngleData.points[i].x;
+                        let dy = currentDetectedPoints[i].y - savedAngleData.points[i].y;
+                        let dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist > ALLOWED_ERROR) { isAnglePerfect = false; break; }
+                    }
+                }
+
+                if (isAnglePerfect) {
+                    lockCounter++;
+                    ctx.strokeStyle = '#34c759'; // 画角が合っていれば緑枠
+                    canvas.classList.remove('error');
+                    
+                    if (lockCounter >= REQUIRED_FRAMES) {
+                        canvas.classList.add('locked');
+                        shootBtn.style.display = 'block';
+                        if (isFirstDayMode) {
+                            statusText.innerHTML = "<span style='color: #34c759;'>🟢 画角が安定しました。撮影ボタンを押すとこの画角を自動記憶します。</span>";
+                        } else {
+                            statusText.innerHTML = "<span style='color: #34c759;'>🟢 前日と画角が一致しました！撮影ボタンを押してください。</span>";
+                        }
+                    } else { statusText.innerHTML = `🟡 位置を確認中...`; }
+                } else {
+                    // 画角がズレている場合
+                    lockCounter = 0;
+                    ctx.strokeStyle = '#ff3b30'; // ズレていたら赤枠
+                    canvas.classList.remove('locked');
+                    canvas.classList.add('error');
+                    shootBtn.style.display = 'none';
+                    statusText.innerHTML = "<span style='color: #ff3b30;'>⚠️ 前日と三脚の位置がズレています！<br>半透明の影にピタッと重なるように直してください。</span>";
+                }
+
+                // 枠線の描画
+                ctx.lineWidth = 5; ctx.beginPath();
                 ctx.moveTo(currentDetectedPoints[0].x, currentDetectedPoints[0].y);
                 ctx.lineTo(currentDetectedPoints[1].x, currentDetectedPoints[1].y);
                 ctx.lineTo(currentDetectedPoints[2].x, currentDetectedPoints[2].y);
                 ctx.lineTo(currentDetectedPoints[3].x, currentDetectedPoints[3].y);
-                ctx.closePath();
-                ctx.stroke();
+                ctx.closePath(); ctx.stroke();
 
-                if (lockCounter >= REQUIRED_FRAMES) {
-                    canvas.classList.add('locked');
-                    shootBtn.style.display = 'block';
-                    statusText.innerHTML = `<span style="color: #34c759;">🟢 領域を確認しました。撮影へ進めます。</span>`;
-                } else {
-                    statusText.innerHTML = `🟡 領域を確認中...`;
-                }
             } else {
                 lockCounter = 0;
-                currentDetectedPoints = null; 
                 shootBtn.style.display = 'none';
                 canvas.classList.remove('locked');
+                canvas.classList.remove('error');
                 statusText.innerHTML = `🔍 マーカーを探しています... (${validCenters.length} / 4)`;
             }
 
