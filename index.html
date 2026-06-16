@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>画角再現システム - フェーズ1</title>
+    <title>画角再現システム - フェーズ2</title>
     <style>
         body {
             margin: 0;
@@ -38,7 +38,20 @@
             border-color: #34c759;
             box-shadow: 0 0 15px rgba(52, 199, 89, 0.5);
         }
-        /* 管理パネル・コントロール周りのスタイル */
+        
+        /* 【追加】オーバーレイ（ゴースト）用キャンバスのスタイル */
+        #canvas-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* 下のキャンバスの操作やクリックを邪魔しない */
+            opacity: 0.4;        /* デフォルトの不透明度（40%） */
+            border: 2px solid transparent; /* 枠線のズレ防止 */
+            box-sizing: border-box;
+        }
+
         .panel {
             background-color: #222;
             padding: 15px;
@@ -57,6 +70,24 @@
             border-bottom: 1px solid #444;
             padding-bottom: 5px;
         }
+        
+        /* 【追加】スライダー周りのスタイル */
+        .slider-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #333;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .slider-group input {
+            flex-grow: 1;
+            margin-left: 15px;
+            accent-color: #007aff;
+        }
+
         .btn-group {
             display: flex;
             flex-wrap: wrap;
@@ -78,11 +109,9 @@
         
         #shoot-btn { background-color: #34c759; display: none; animation: pulse 1.5s infinite; width: 90%; max-width: 640px; margin: 15px 0; font-size: 18px; padding: 15px; }
         
-        /* 管理用ボタンの色分け */
-        .btn-save { background-color: #ff9500; }     /* オレンジ */
-        .btn-export { background-color: #5856d6; }   /* パープル */
-        .btn-import { background-color: #555; }      /* グレー */
-        
+        .btn-save { background-color: #ff9500; }
+        .btn-export { background-color: #5856d6; }
+        .btn-import { background-color: #555; }
         .btn:active { transform: scale(0.98); }
         
         #status {
@@ -111,18 +140,25 @@
     <div class="container">
         <video id="camera-view" autoplay playsinline muted></video>
         <canvas id="canvas-output"></canvas>
+        <!-- 【追加】リアルタイム映像の上に重ねる半透明のキャンバス -->
+        <canvas id="canvas-overlay"></canvas>
     </div>
 
     <button id="start-btn" class="btn" disabled>システム開始</button>
     <button id="shoot-btn" class="btn">📸 画角OK！撮影開始（0.5倍へ）</button>
 
-    <!-- 各種データ処理用の隠しインプット -->
     <input type="file" id="camera-trigger" accept="image/*" capture="environment">
     <input type="file" id="import-file" accept=".json">
 
-    <!-- 画角管理パネル（追加項目） -->
     <div class="panel">
-        <div class="panel-title">⚙️ 初日用・画角データの管理</div>
+        <div class="panel-title">⚙️ 画角データの管理と調整</div>
+        
+        <!-- 【追加】お手本画像の透明度調整スライダー -->
+        <div class="slider-group">
+            <span>お手本重ね合わせ (透明度)</span>
+            <input type="range" id="opacity-slider" min="0" max="100" value="40">
+        </div>
+
         <div class="btn-group">
             <button id="save-btn" class="btn btn-save">この画角を「基準」に設定</button>
             <button id="export-btn" class="btn btn-export">データをファイル保存 (DL)</button>
@@ -134,12 +170,17 @@
         const video = document.getElementById('camera-view');
         const canvas = document.getElementById('canvas-output');
         const ctx = canvas.getContext('2d');
+        
+        // 【追加】オーバーレイ用要素とスライダーの取得
+        const canvasOverlay = document.getElementById('canvas-overlay');
+        const ctxOverlay = canvasOverlay.getContext('2d');
+        const opacitySlider = document.getElementById('opacity-slider');
+
         const startBtn = document.getElementById('start-btn');
         const shootBtn = document.getElementById('shoot-btn');
         const statusText = document.getElementById('status');
         const cameraTrigger = document.getElementById('camera-trigger');
         
-        // 追加した要素の取得
         const saveBtn = document.getElementById('save-btn');
         const exportBtn = document.getElementById('export-btn');
         const importBtn = document.getElementById('import-btn');
@@ -151,11 +192,29 @@
         let lockCounter = 0;
         const REQUIRED_FRAMES = 15; 
 
-        // 内部で保持する画角データ
-        let currentDetectedPoints = null; // 現在検知中の4点座標
-        let savedAngleData = null;       // ローカルに保存されている基準データ
+        let currentDetectedPoints = null; 
+        let savedAngleData = null;       
 
-        // アプリ起動時にローカルストレージから既存のデータを読み込む
+        // 【追加】保存されている基準画像（Base64）を重ね合わせキャンバスに描画する関数
+        function drawOverlayImage() {
+            if (!savedAngleData || !savedAngleData.image) {
+                ctxOverlay.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
+                return;
+            }
+            const img = new Image();
+            img.onload = () => {
+                ctxOverlay.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
+                // 解像度を合わせて描画
+                ctxOverlay.drawImage(img, 0, 0, canvasOverlay.width, canvasOverlay.height);
+            };
+            img.src = savedAngleData.image;
+        }
+
+        // 【追加】スライダーを動かしたときに透明度をリアルタイム変更するイベント
+        opacitySlider.addEventListener('input', (e) => {
+            canvasOverlay.style.opacity = e.target.value / 100;
+        });
+
         window.addEventListener('DOMContentLoaded', () => {
             const localData = localStorage.getItem('robot_cooking_angle_data');
             if (localData) {
@@ -164,7 +223,6 @@
             }
         });
 
-        // OpenCV.js の読み込み完了を待つ
         document.getElementById('opencv-src').addEventListener('load', () => {
             if (savedAngleData) {
                 statusText.innerText = "準備完了！(記憶された画角データがあります)";
@@ -214,6 +272,13 @@
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                     
+                    // 【追加】重ね合わせ用キャンバスの解像度も映像と完全に一致させる
+                    canvasOverlay.width = video.videoWidth;
+                    canvasOverlay.height = video.videoHeight;
+                    
+                    // カメラ起動直後にお手本画像を描画
+                    drawOverlayImage();
+
                     src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
                     dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
                     hsv = new cv.Mat();
@@ -222,7 +287,7 @@
                     hierarchy = new cv.Mat();
 
                     isProcessing = true;
-                    statusText.innerText = "内側マーカー4つを画面内に収めてください";
+                    statusText.innerText = "お手本の影に重なるように三脚を調整してください";
                     requestAnimationFrame(processVideo);
                 };
             } catch (error) {
@@ -230,32 +295,31 @@
             }
         });
 
-        // 📸【初日用】現在の画角・座標を保存する処理
         saveBtn.addEventListener('click', () => {
             if (!currentDetectedPoints || currentDetectedPoints.length !== 4) {
-                alert("エラー：現在マーカーが正しく4点検出されていません。画面に収めてから押してください。");
+                alert("エラー：現在マーカーが正しく 4点 検出されていません。");
                 return;
             }
 
-            // 現在のキャンバスの見た目（静止画）をBase64文字列として取得
             const imageDataUrl = canvas.toDataURL('image/jpeg', 0.7);
 
-            // 保存用のオブジェクトを作成
             savedAngleData = {
                 timestamp: new Date().toISOString(),
                 points: currentDetectedPoints,
                 image: imageDataUrl
             };
 
-            // ローカルストレージに保存
             localStorage.setItem('robot_cooking_angle_data', JSON.stringify(savedAngleData));
-            alert("🎉 本日の画角を『基準データ』として端末に記憶しました！\n2日目以降はこの位置に合わせて撮影します。");
+            
+            // 【追加】新規保存したお手本画像をオーバーレイに即時反映
+            drawOverlayImage();
+            
+            alert("🎉 本日の画角を『基準データ』として記憶しました！");
         });
 
-        // 📥【バックアップ】データをファイル(JSON)としてダウンロード
         exportBtn.addEventListener('click', () => {
             if (!savedAngleData) {
-                alert("保存された基準データがありません。先に「基準に設定」を行ってください。");
+                alert("保存された基準データがありません。");
                 return;
             }
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(savedAngleData));
@@ -267,12 +331,8 @@
             downloadAnchor.remove();
         });
 
-        // 📤【復元】ファイルを選択させるトリガー
-        importBtn.addEventListener('click', () => {
-            importFile.click();
-        });
+        importBtn.addEventListener('click', () => { importFile.click(); });
 
-        // 📤【復元】JSONファイルが読み込まれたときの処理
         importFile.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -284,13 +344,15 @@
                     if (parsedData.points && parsedData.image) {
                         savedAngleData = parsedData;
                         localStorage.setItem('robot_cooking_angle_data', JSON.stringify(savedAngleData));
+                        
+                        // 【追加】復元したお手本画像をオーバーレイに即時反映
+                        drawOverlayImage();
+                        
                         alert("🎉 ファイルから画角データを正常に復元しました！");
                     } else {
-                        alert("不正なファイル形式です。正しい画角バックアップファイルを選択してください。");
+                        alert("不正なファイル形式です。");
                     }
-                } catch (err) {
-                    alert("ファイルの読み込みに失敗しました。");
-                }
+                } catch (err) { alert("ファイルの読み込みに失敗しました。"); }
             };
             reader.readAsText(file);
         });
@@ -354,7 +416,6 @@
                 let topTwo = [validCenters[0], validCenters[1]].sort((a, b) => a.x - b.x);
                 let bottomTwo = [validCenters[2], validCenters[3]].sort((a, b) => a.x - b.x);
                 
-                // 【重要】検出された4点の座標をグローバル変数に格納（保存ボタン用）
                 currentDetectedPoints = [topTwo[0], topTwo[1], bottomTwo[1], bottomTwo[0]];
 
                 ctx.strokeStyle = '#34c759';
@@ -376,7 +437,7 @@
                 }
             } else {
                 lockCounter = 0;
-                currentDetectedPoints = null; // 4点ないときはリセット
+                currentDetectedPoints = null; 
                 shootBtn.style.display = 'none';
                 canvas.classList.remove('locked');
                 statusText.innerHTML = `🔍 マーカーを探しています... (${validCenters.length} / 4)`;
